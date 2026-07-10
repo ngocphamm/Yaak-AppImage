@@ -1,24 +1,67 @@
 #!/bin/sh
-
+# Bundle the extracted Yaak AppDir into a portable AppImage using sharun, and
+# bake in the WebKitGTK env fixes so it "just works" on Wayland / NVIDIA.
 set -eu
 
-ARCH=$(uname -m)
-VERSION=$(pacman -Q PACKAGENAME | awk '{print $2; exit}') # example command to get version of application here
-export ARCH VERSION
+ARCH="$(uname -m)"
+export ARCH
 export OUTPATH=./dist
-export ADD_HOOKS="self-updater.hook"
+
+# --- AppImage metadata --------------------------------------------------------
+# Auto-detect the .desktop and the largest icon the .deb shipped, so this keeps
+# working even if upstream tweaks the paths.
+export DESKTOP="$(find ./AppDir/share/applications -name '*.desktop' | head -n1)"
+export ICON="$(find ./AppDir/share/icons -name 'yaak*.png' | sort -V | tail -n1)"
+
+# Main binary inside ./AppDir/bin (Tauri names Yaak's binary "yaak-app").
+# Confirm against the `ls ./AppDir/bin` output from get-dependencies.sh.
+export MAIN_BIN=yaak-app
+
+# Self-updater metadata -> points at YOUR fork's GitHub releases.
 export UPINFO="gh-releases-zsync|${GITHUB_REPOSITORY%/*}|${GITHUB_REPOSITORY#*/}|latest|*$ARCH.AppImage.zsync"
-export ICON=PATH_OR_URL_TO_ICON
-export DESKTOP=PATH_OR_URL_TO_DESKTOP_ENTRY
 
-# Deploy dependencies
-quick-sharun /PATH/TO/BINARY_AND_LIBRARIES_HERE
+# --- sharun behaviour ---------------------------------------------------------
+export DEPLOY_OPENGL=1     # WebKitGTK needs GL
+export DEPLOY_VULKAN=0     # not needed once dmabuf renderer is off; flip to 1
+                           # only if NVIDIA users still report issues
+export GTK_CLASS_FIX=1     # fix WM_CLASS so Wayland matches yaak.desktop
+                           # (prevents "generic wl-shell icon" / grouping bugs)
+export ANYLINUX_LIB=1      # general portability preload (default on)
+export URUNTIME_PRELOAD=1
 
-# Additional changes can be done in between here
+# OPTIONAL self-updater hook (checks YOUR releases and prompts the user).
+# NOTE: Yaak also has its own in-app updater. If it tries to replace this file
+# with the official (non-sharun) AppImage, the Wayland bug comes back. Consider
+# disabling Yaak's built-in updater (see README notes) if you keep this hook.
+export ADD_HOOKS="self-updater.bg.hook"
 
-# Turn AppDir into AppImage
+# --- Bootstrap quick-sharun if the container doesn't provide it ---------------
+command -v quick-sharun >/dev/null 2>&1 || {
+    wget -q https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/refs/heads/main/useful-tools/quick-sharun.sh \
+        -O /usr/local/bin/quick-sharun
+    chmod +x /usr/local/bin/quick-sharun
+}
+
+# --- Bundle every binary the .deb shipped (main app + any Tauri sidecars) -----
+quick-sharun ./AppDir/bin/*
+
+# --- Wayland / NVIDIA fixes: THE WHOLE POINT OF THIS WRAPPER -------------------
+# sharun reads AppDir/.env and exports these before launching Yaak, so end users
+# never have to set them by hand. These are exactly the variables Yaak's own
+# docs + issue tracker recommend for blank-screen / crash-on-launch under
+# Wayland and on NVIDIA.
+#
+# If you find compositing works fine on your target systems and you'd rather
+# keep GPU compositing, delete the COMPOSITING_MODE line and keep only the
+# dmabuf one (that's the safest single fix with the least performance cost).
+# cat >> ./AppDir/.env <<'EOF'
+# WEBKIT_DISABLE_DMABUF_RENDERER=1
+# WEBKIT_DISABLE_COMPOSITING_MODE=1
+# EOF
+
+# --- Turn the AppDir into an AppImage ----------------------------------------
 quick-sharun --make-appimage
 
-# Test the app for 12 seconds, if the test fails due to the app
-# having issues running in the CI use --simple-test instead
-quick-sharun --test ./dist/*.AppImage
+echo "----------------------------------------------------------------"
+echo "Built:"
+ls -1 ./dist

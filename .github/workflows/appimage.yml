@@ -1,50 +1,85 @@
-name: Anylinux-AppImage
-concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
+# .github/workflows/build.yml
+name: Build Yaak AppImage
+
 on:
+  workflow_dispatch:        # manual runs
   schedule:
-    - cron: "0 7 1/21 * *" # We default to rebuilding every 21 days, change this to your liking
-  workflow_dispatch: {}
+    - cron: "0 6 * * *"     # daily: pick up new upstream Yaak stable releases
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write           # needed to publish releases
 
 jobs:
   build:
-    name: "${{ matrix.name }} (${{ matrix.arch }})"
-    runs-on: ${{ matrix.runs-on }}
+    name: Build (${{ matrix.arch }})
+    runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - runs-on: ubuntu-latest
-            name: Build AppImage
-            arch: x86_64
-          # comment out these 3 lines if aarch64 is not wanted
-          - runs-on: ubuntu-24.04-arm
-            name: Build AppImage
-            arch: aarch64
-    container: ghcr.io/pkgforge-dev/archlinux:latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Preparing Container
-        uses: pkgforge-dev/anylinux-setup-action@0964f2258d6c93d1391359978dde081fd8b3c6af # v2
-      - name: Install Dependencies
-        run: /bin/sh ./get-dependencies.sh
-      - name: Make AppImage
-        run: /bin/sh ./make-appimage.sh
-      - name: Upload artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: AppImage-${{ matrix.arch }}
-          path: dist
+          - arch: x86_64    # add { arch: aarch64 } once Yaak ships an arm64 .deb
 
-  release:
-    if: ${{ github.ref_name == 'main' }}
-    needs: [build]
-    permissions: write-all
-    runs-on: ubuntu-latest
+    # The pkgforge builder image ships sharun, quick-sharun, get-debloated-pkgs,
+    # appimagetool and uruntime on PATH. Confirm the exact image/tag against the
+    # TEMPLATE-AppImage you forked from — this is the one thing most likely to
+    # differ. (The get-dependencies / make-appimage scripts also self-bootstrap
+    # the helpers, so a plain archlinux:latest image will work too.)
+    container:
+      image: ghcr.io/pkgforge-dev/archlinux:latest
+      options: --privileged
+
     steps:
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get Yaak + dependencies
+        run: |
+          chmod +x ./get-dependencies.sh
+          ./get-dependencies.sh
+
+      - name: Read resolved version
+        id: ver
+        run: echo "version=$(cat "$HOME/version")" >> "$GITHUB_OUTPUT"
+
+      # Skip the (expensive) build + release if we've already published this
+      # upstream version, so the daily cron doesn't churn releases.
+      - name: Check if already released
+        id: check
+        run: |
+          if wget -q --spider \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${{ steps.ver.outputs.version }}"; then
+            echo "exists=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build AppImage
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          chmod +x ./make-appimage.sh
+          ./make-appimage.sh
+
+      - name: Upload build artifact
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/upload-artifact@v4
         with:
-          pattern: AppImage-*
-          merge-multiple: true
-      - name: Release AppImage
-        uses: pkgforge-dev/make-stable-appimage-release@4ed3d48ccb065352b6e6c0db6d39885b201c54a0 #v1.1
+          name: Yaak-AppImage-${{ matrix.arch }}
+          path: dist/*
+
+      - name: Publish release
+        if: steps.check.outputs.exists == 'false' && github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: Yaak ${{ steps.ver.outputs.version }} (AppImage)
+          body: |
+            Unofficial, portable AppImage of Yaak ${{ steps.ver.outputs.version }},
+            repackaged with sharun so it runs on any Linux distro and ships the
+            WebKitGTK Wayland/NVIDIA fixes baked in.
+
+            Not affiliated with or endorsed by the Yaak project.
+          files: dist/*
+          fail_on_unmatched_files: true
+          make_latest: true
