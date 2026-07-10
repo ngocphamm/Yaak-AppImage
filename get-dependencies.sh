@@ -13,7 +13,7 @@ ARCH="$(uname -m)"
 # arm64, this mapping will pick it up automatically.
 case "$ARCH" in
     x86_64)  DEB_ARCH="amd64" ;;
-    aarch64) DEB_ARCH="arm64" ;;   # not published by Yaak yet -> will 404
+    aarch64) DEB_ARCH="arm64" ;;
     *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;;
 esac
 
@@ -75,6 +75,22 @@ fi
 # --- Download + extract the .deb into ./AppDir -------------------------------
 echo "Downloading $DEB_LINK ..."
 wget --retry-connrefused --tries=30 "$DEB_LINK" -O /tmp/yaak.deb
+
+# Yaak's Tauri updater public key
+# Take from https://github.com/mountain-loop/yaak/blob/main/crates-tauri/yaak-app-client/tauri.release.conf.json
+YAAK_PUBKEY_B64="dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVGRkFGMjQxRUNEOTQ3MzAKUldRd1I5bnNRZkw2NzRtMnRlWTN3R24xYUR3aGRsUjJzWGwvdHdEcGljb3ZJMUNlMjFsaHlqVU4K"
+
+# Download the signature alongside the .deb
+wget --retry-connrefused --tries=30 "${DEB_LINK}.sig" -O /tmp/yaak.deb.sig
+
+# Unwrap Tauri's base64 layer back into standard minisign files
+printf '%s' "$YAAK_PUBKEY_B64" | base64 -d > /tmp/yaak.pub
+base64 -d /tmp/yaak.deb.sig > /tmp/yaak.deb.minisig
+
+# Verify (fails the build if the signature doesn't match)
+minisign -Vm /tmp/yaak.deb -p /tmp/yaak.pub -x /tmp/yaak.deb.minisig \
+    || { echo "Signature verification FAILED -- aborting" >&2; exit 1; }
+echo "Signature OK"
 
 echo "Extracting .deb -> ./AppDir ..."
 ar xv /tmp/yaak.deb
