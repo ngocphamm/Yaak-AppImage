@@ -1,85 +1,64 @@
 # .github/workflows/build.yml
-name: Build Yaak AppImage
+name: Anylinux-AppImage
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 on:
-  workflow_dispatch:        # manual runs
   schedule:
-    - cron: "0 6 * * *"     # daily: pick up new upstream Yaak stable releases
-  push:
-    branches: [ main ]
-
-permissions:
-  contents: write           # needed to publish releases
+    - cron: "0 7 */3 * *"   # rebuild every ~3 days to catch new Yaak stable releases
+  workflow_dispatch: {}
 
 jobs:
   build:
-    name: Build (${{ matrix.arch }})
-    runs-on: ubuntu-latest
+    name: "${{ matrix.name }} (${{ matrix.arch }})"
+    runs-on: ${{ matrix.runs-on }}
     strategy:
-      fail-fast: false
       matrix:
         include:
-          - arch: x86_64    # add { arch: aarch64 } once Yaak ships an arm64 .deb
-
-    # The pkgforge builder image ships sharun, quick-sharun, get-debloated-pkgs,
-    # appimagetool and uruntime on PATH. Confirm the exact image/tag against the
-    # TEMPLATE-AppImage you forked from — this is the one thing most likely to
-    # differ. (The get-dependencies / make-appimage scripts also self-bootstrap
-    # the helpers, so a plain archlinux:latest image will work too.)
-    container:
-      image: ghcr.io/pkgforge-dev/archlinux:latest
-      options: --privileged
-
+          - runs-on: ubuntu-latest
+            name: Build AppImage
+            arch: x86_64
+          # Yaak ships no arm64 .deb yet -> uncomment if/when it does
+          # - runs-on: ubuntu-24.04-arm
+          #   name: Build AppImage
+          #   arch: aarch64
+    container: ghcr.io/pkgforge-dev/archlinux:latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
-      - name: Get Yaak + dependencies
-        run: |
-          chmod +x ./get-dependencies.sh
-          ./get-dependencies.sh
+      # Provisions the bare Arch container with the full pkgforge toolchain:
+      # wget, base-devel, quick-sharun, get-debloated-pkgs, sharun, appimagetool,
+      # uruntime, etc. This is what fixes the "wget: command not found" error and
+      # lets get-dependencies.sh / make-appimage.sh call those tools bare.
+      - name: Preparing Container
+        uses: pkgforge-dev/anylinux-setup-action@0964f2258d6c93d1391359978dde081fd8b3c6af # v2
 
-      - name: Read resolved version
-        id: ver
-        run: echo "version=$(cat "$HOME/version")" >> "$GITHUB_OUTPUT"
+      - name: Install Dependencies
+        run: /bin/sh ./get-dependencies.sh
 
-      # Skip the (expensive) build + release if we've already published this
-      # upstream version, so the daily cron doesn't churn releases.
-      - name: Check if already released
-        id: check
-        run: |
-          if wget -q --spider \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${{ steps.ver.outputs.version }}"; then
-            echo "exists=true"  >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+      - name: Make AppImage
+        run: /bin/sh ./make-appimage.sh
 
-      - name: Build AppImage
-        if: steps.check.outputs.exists == 'false'
-        run: |
-          chmod +x ./make-appimage.sh
-          ./make-appimage.sh
-
-      - name: Upload build artifact
-        if: steps.check.outputs.exists == 'false'
-        uses: actions/upload-artifact@v4
+      - name: Upload artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: Yaak-AppImage-${{ matrix.arch }}
-          path: dist/*
+          name: AppImage-${{ matrix.arch }}
+          path: dist
 
-      - name: Publish release
-        if: steps.check.outputs.exists == 'false' && github.event_name != 'pull_request'
-        uses: softprops/action-gh-release@v2
+  release:
+    if: ${{ github.ref_name == 'main' }}
+    needs: [build]
+    permissions: write-all
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
-          tag_name: v${{ steps.ver.outputs.version }}
-          name: Yaak ${{ steps.ver.outputs.version }} (AppImage)
-          body: |
-            Unofficial, portable AppImage of Yaak ${{ steps.ver.outputs.version }},
-            repackaged with sharun so it runs on any Linux distro and ships the
-            WebKitGTK Wayland/NVIDIA fixes baked in.
+          pattern: AppImage-*
+          merge-multiple: true
 
-            Not affiliated with or endorsed by the Yaak project.
-          files: dist/*
-          fail_on_unmatched_files: true
-          make_latest: true
+      # Handles tagging + publishing the stable GitHub release (AppImage + zsync).
+      # Replaces the manual action-gh-release step and the "already released" guard.
+      - name: Release AppImage
+        uses: pkgforge-dev/make-stable-appimage-release@4ed3d48ccb065352b6e6c0db6d39885b201c54a0 # v1.1
