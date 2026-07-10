@@ -44,6 +44,14 @@ DEB_LINK="https://github.com/mountain-loop/yaak/releases/download/v${VERSION}/ya
 echo "Installing debloated webkit2gtk-4.1 + common libs..."
 get-debloated-pkgs --add-common --prefer-nano webkit2gtk-4.1-mini
 
+# Yaak's WebKitGTK links libjxl (JPEG XL). The pkgforge webkit2gtk-4.1-mini
+# currently expects libjxl.so.0.11, but Arch's stock libjxl has moved to 0.12,
+# so nothing on the system provides the 0.11 soname and sharun aborts. Pull the
+# matching 0.11 build from the Arch Linux Archive so it can be bundled.
+# NOTE: once pkgforge rebuilds webkit-mini against libjxl 0.12, drop or bump this.
+pacman -U --noconfirm \
+    https://archive.archlinux.org/packages/l/libjxl/libjxl-0.11.1-5-x86_64.pkg.tar.zst
+
 # --- Download + extract the .deb into ./AppDir -------------------------------
 echo "Downloading $DEB_LINK ..."
 wget --retry-connrefused --tries=30 "$DEB_LINK" -O /tmp/yaak.deb

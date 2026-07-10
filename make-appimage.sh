@@ -13,9 +13,8 @@ export OUTPATH=./dist
 export DESKTOP="$(find ./AppDir/share/applications -name '*.desktop' | head -n1)"
 export ICON="$(find ./AppDir/share/icons -name 'yaak*.png' | sort -V | tail -n1)"
 
-# Main binary inside ./AppDir/bin (Tauri names Yaak's binary "yaak-app").
-# Confirm against the `ls ./AppDir/bin` output from get-dependencies.sh.
-export MAIN_BIN=yaak-app
+# Main binary inside ./AppDir/bin. Yaak's GUI binary is "yaak-app-client"
+export MAIN_BIN=yaak-app-client
 
 # Self-updater metadata -> points at YOUR fork's GitHub releases.
 export UPINFO="gh-releases-zsync|${GITHUB_REPOSITORY%/*}|${GITHUB_REPOSITORY#*/}|latest|*$ARCH.AppImage.zsync"
