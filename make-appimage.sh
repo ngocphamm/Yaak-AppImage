@@ -44,20 +44,6 @@ command -v quick-sharun >/dev/null 2>&1 || {
 # --- Bundle every binary the .deb shipped (main app + any Tauri sidecars) -----
 quick-sharun ./AppDir/bin/*
 
-# --- Wayland / NVIDIA fixes: THE WHOLE POINT OF THIS WRAPPER -------------------
-# sharun reads AppDir/.env and exports these before launching Yaak, so end users
-# never have to set them by hand. These are exactly the variables Yaak's own
-# docs + issue tracker recommend for blank-screen / crash-on-launch under
-# Wayland and on NVIDIA.
-#
-# If you find compositing works fine on your target systems and you'd rather
-# keep GPU compositing, delete the COMPOSITING_MODE line and keep only the
-# dmabuf one (that's the safest single fix with the least performance cost).
-# cat >> ./AppDir/.env <<'EOF'
-# WEBKIT_DISABLE_DMABUF_RENDERER=1
-# WEBKIT_DISABLE_COMPOSITING_MODE=1
-# EOF
-
 # --- Turn the AppDir into an AppImage ----------------------------------------
 quick-sharun --make-appimage
 

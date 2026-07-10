@@ -7,7 +7,7 @@ concurrency:
 
 on:
   schedule:
-    - cron: "0 7 */3 * *"   # rebuild every ~3 days to catch new Yaak stable releases
+    - cron: "0 7 */7 * *"   # rebuild every ~7 days to catch new Yaak stable releases
   workflow_dispatch: {}
 
 jobs:
@@ -20,10 +20,9 @@ jobs:
           - runs-on: ubuntu-latest
             name: Build AppImage
             arch: x86_64
-          # Yaak ships no arm64 .deb yet -> uncomment if/when it does
-          # - runs-on: ubuntu-24.04-arm
-          #   name: Build AppImage
-          #   arch: aarch64
+          - runs-on: ubuntu-24.04-arm
+            name: Build AppImage
+            arch: aarch64
     container: ghcr.io/pkgforge-dev/archlinux:latest
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
