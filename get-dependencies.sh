@@ -87,6 +87,8 @@ wget --retry-connrefused --tries=30 "${DEB_LINK}.sig" -O /tmp/yaak.deb.sig
 printf '%s' "$YAAK_PUBKEY_B64" | base64 -d > /tmp/yaak.pub
 base64 -d /tmp/yaak.deb.sig > /tmp/yaak.deb.minisig
 
+command -v minisign >/dev/null 2>&1 || pacman -S --noconfirm --needed minisign 
+
 # Verify (fails the build if the signature doesn't match)
 minisign -Vm /tmp/yaak.deb -p /tmp/yaak.pub -x /tmp/yaak.deb.minisig \
     || { echo "Signature verification FAILED -- aborting" >&2; exit 1; }
