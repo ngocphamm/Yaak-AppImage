@@ -1,4 +1,4 @@
-# .github/workflows/build.yml
+# .github/workflows/appimage.yml
 name: Anylinux-AppImage
 
 concurrency:
@@ -7,12 +7,61 @@ concurrency:
 
 on:
   schedule:
-    - cron: "0 7 */7 * *"   # rebuild every ~7 days to catch new Yaak stable releases
-  workflow_dispatch: {}
+    - cron: "0 7 */7 * *"   # weekly: check for a new Yaak stable release
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild even if this Yaak version was already shipped"
+        type: boolean
+        default: false
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Gate: only build when Yaak's current version differs from the last version
+  # we successfully shipped. LATEST_VERSION is committed by
+  # make-stable-appimage-release *after* a successful publish, so it's a safe
+  # "last shipped" marker (a failed build never bumps it). Force overrides.
+  # ---------------------------------------------------------------------------
+  check:
+    name: Check for new Yaak version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      should_build: ${{ steps.decide.outputs.should_build }}
+      version: ${{ steps.decide.outputs.version }}
+    steps:
+      - name: Decide whether to build
+        id: decide
+        run: |
+          set -eu
+
+          # Latest STABLE Yaak version (excludes pre-releases), strip leading "v".
+          VERSION="$(curl -fsSL https://api.github.com/repos/mountain-loop/yaak/releases/latest \
+            | grep -Po '"tag_name"\s*:\s*"\K[^"]+' | sed 's/^v//')"
+          [ -n "$VERSION" ] || { echo "Could not resolve Yaak version" >&2; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # Last version we actually shipped (committed by the release action).
+          LAST="$(curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/LATEST_VERSION" \
+            | tr -d '[:space:]' || true)"
+          echo "Yaak latest: ${VERSION} | last shipped: ${LAST:-<none>}"
+
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            echo "Force requested -> building."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          elif [ "$VERSION" = "$LAST" ]; then
+            echo "Already shipped ${VERSION} -> skipping."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New version ${VERSION} (was ${LAST:-none}) -> building."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: "${{ matrix.name }} (${{ matrix.arch }})"
+    needs: [check]
+    if: ${{ needs.check.outputs.should_build == 'true' }}
     runs-on: ${{ matrix.runs-on }}
     strategy:
       matrix:
@@ -29,8 +78,7 @@ jobs:
 
       # Provisions the bare Arch container with the full pkgforge toolchain:
       # wget, base-devel, quick-sharun, get-debloated-pkgs, sharun, appimagetool,
-      # uruntime, etc. This is what fixes the "wget: command not found" error and
-      # lets get-dependencies.sh / make-appimage.sh call those tools bare.
+      # uruntime, etc.
       - name: Preparing Container
         uses: pkgforge-dev/anylinux-setup-action@0964f2258d6c93d1391359978dde081fd8b3c6af # v2
 
@@ -47,8 +95,8 @@ jobs:
           path: dist
 
   release:
-    if: ${{ github.ref_name == 'main' }}
-    needs: [build]
+    if: ${{ github.ref_name == 'main' && needs.check.outputs.should_build == 'true' }}
+    needs: [check, build]
     permissions: write-all
     runs-on: ubuntu-latest
     steps:
@@ -57,7 +105,7 @@ jobs:
           pattern: AppImage-*
           merge-multiple: true
 
-      # Handles tagging + publishing the stable GitHub release (AppImage + zsync).
-      # Replaces the manual action-gh-release step and the "already released" guard.
+      # Handles tagging + publishing the stable GitHub release (AppImage + zsync),
+      # and commits LATEST_VERSION back to the repo with [skip ci].
       - name: Release AppImage
         uses: pkgforge-dev/make-stable-appimage-release@4ed3d48ccb065352b6e6c0db6d39885b201c54a0 # v1.1
