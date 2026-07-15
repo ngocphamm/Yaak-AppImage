@@ -44,34 +44,6 @@ DEB_LINK="https://github.com/mountain-loop/yaak/releases/download/v${VERSION}/ya
 echo "Installing debloated webkit2gtk-4.1 + common libs..."
 get-debloated-pkgs --add-common --prefer-nano webkit2gtk-4.1-mini
 
-# WebKitGTK (webkit2gtk-4.1-mini) links libjxl. pkgforge's mini build currently
-# expects libjxl.so.0.11, but Arch's stock libjxl has moved to 0.12, so the
-# soname can be missing and sharun aborts. Install a matching build, but only if
-# that soname isn't already present (no-op once upstream catches up).
-if ! find /usr/lib /usr/lib64 -maxdepth 2 -name 'libjxl.so.0.11*' 2>/dev/null | grep -q .; then
-    echo "libjxl.so.0.11 not found -> installing a matching build for $ARCH"
-    case "$ARCH" in
-        x86_64)
-            # archive.archlinux.org hosts historical x86_64 packages.
-            pacman -U --noconfirm \
-                "https://archive.archlinux.org/packages/l/libjxl/libjxl-0.11.1-5-x86_64.pkg.tar.zst"
-            ;;
-        aarch64)
-            # archive.archlinux.org is x86_64-only. Arch Linux ARM often lags and
-            # may still ship 0.11, so try the repo first.
-            pacman -Sy --noconfirm --needed libjxl || true
-            if ! find /usr/lib /usr/lib64 -maxdepth 2 -name 'libjxl.so.0.11*' 2>/dev/null | grep -q .; then
-                echo "No pinned aarch64 libjxl 0.11 source available." >&2
-                echo "If the deploy aborts on libjxl.so.0.11, vendor a matching" >&2
-                echo "aarch64 libjxl .pkg.tar.zst and 'pacman -U' it here." >&2
-            fi
-            ;;
-        *)
-            echo "Unhandled arch for libjxl fix: $ARCH" >&2
-            ;;
-    esac
-fi
-
 # --- Download + extract the .deb into ./AppDir -------------------------------
 echo "Downloading $DEB_LINK ..."
 wget --retry-connrefused --tries=30 "$DEB_LINK" -O /tmp/yaak.deb
